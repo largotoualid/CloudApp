@@ -1,6 +1,6 @@
-Flask==2.3.3
-flask_sqlalchemy==2.5.1
-SQLAlchemy==2.0.29
-psycopg2-binary==2.9.9
-flask-cors==4.0.0
+Flask
+flask_sqlalchemy
+SQLAlchemy
+psycopg2-binary
+flask-cors
 gunicorn
