@@ -1,86 +1,108 @@
-from flask import Flask, request, redirect
-from sqlalchemy import create_engine, Column, Integer, String
-from sqlalchemy.orm import sessionmaker, declarative_base
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
 
-# PostgreSQL connection string (Render)
-DATABASE_URL = "postgresql://myapp_db_er18_user:9u844kb8VabGIjfB11Y2C4nKKO510toZ@dpg-d081f0s9c44c73be2d00-a.oregon-postgres.render.com/myapp_db_er18"
+# Replace with your actual Render DB URL
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://myapp_db_er18_user:9u844kb8VabGIjfB11Y2C4nKKO510toZ@dpg-d081f0s9c44c73be2d00-a.oregon-postgres.render.com/myapp_db_er18'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# SQLAlchemy setup
-engine = create_engine(DATABASE_URL)
-Session = sessionmaker(bind=engine)
-session = Session()
-Base = declarative_base()
+db = SQLAlchemy(app)
 
-# Model
-class TextEntry(Base):
-    __tablename__ = 'text_entries'
-    id = Column(Integer, primary_key=True)
-    content = Column(String)
+class Entry(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    text = db.Column(db.String(255), nullable=False)
 
-# Create the table if it doesn't exist
-Base.metadata.create_all(engine)
+with app.app_context():
+    db.create_all()
 
-@app.route("/", methods=["GET", "POST"])
-def index():
-    if request.method == "POST":
-        content = request.form.get("content")
-        if content:
-            new_entry = TextEntry(content=content)
-            session.add(new_entry)
-            session.commit()
-        return redirect("/")
+@app.route('/')
+def home():
+    return """
+    <h2>Text Entry App</h2>
+    <input type="text" id="entryText" placeholder="Enter text">
+    <button onclick="addEntry()">Add</button>
+    <ul id="entries"></ul>
 
-    entries = session.query(TextEntry).all()
+    <script>
+    async function loadEntries() {
+        const res = await fetch('/entries');
+        const data = await res.json();
+        const ul = document.getElementById('entries');
+        ul.innerHTML = '';
+        data.forEach(entry => {
+            const li = document.createElement('li');
+            li.innerHTML = `
+                <input value="${entry.text}" onchange="editEntry(${entry.id}, this.value)">
+                <button onclick="deleteEntry(${entry.id})">Delete</button>
+            `;
+            ul.appendChild(li);
+        });
+    }
 
-    html = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Text Manager</title>
-    </head>
-    <body>
-        <h1>Text Saver App</h1>
-        <form method="POST">
-            <input type="text" name="content" placeholder="Enter text" required>
-            <button type="submit">Save</button>
-        </form>
-        <hr>
-        <h2>Saved Entries</h2>
+    async function addEntry() {
+        const text = document.getElementById('entryText').value;
+        if (text.trim()) {
+            await fetch('/entries', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            document.getElementById('entryText').value = '';
+            loadEntries();
+        }
+    }
+
+    async function editEntry(id, newText) {
+        await fetch('/entries/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: newText })
+        });
+    }
+
+    async function deleteEntry(id) {
+        await fetch('/entries/' + id, { method: 'DELETE' });
+        loadEntries();
+    }
+
+    loadEntries();
+    </script>
     """
 
-    for entry in entries:
-        html += f"""
-        <form method="POST" action="/update/{entry.id}">
-            <input type="text" name="content" value="{entry.content}">
-            <button type="submit">Update</button>
-            <a href="/delete/{entry.id}">Delete</a>
-        </form><br>
-        """
+@app.route('/entries', methods=['GET'])
+def get_entries():
+    entries = Entry.query.all()
+    return jsonify([{'id': e.id, 'text': e.text} for e in entries])
 
-    html += """
-    </body>
-    </html>
-    """
-    return html
+@app.route('/entries', methods=['POST'])
+def add_entry():
+    data = request.get_json()
+    entry = Entry(text=data['text'])
+    db.session.add(entry)
+    db.session.commit()
+    return jsonify({'id': entry.id, 'text': entry.text}), 201
 
-@app.route("/update/<int:entry_id>", methods=["POST"])
-def update(entry_id):
-    new_content = request.form.get("content")
-    entry = session.get(TextEntry, entry_id)
-    if entry:
-        entry.content = new_content
-        session.commit()
-    return redirect("/")
+@app.route('/entries/<int:entry_id>', methods=['PUT'])
+def update_entry(entry_id):
+    data = request.get_json()
+    entry = Entry.query.get(entry_id)
+    if not entry:
+        return jsonify({'error': 'Not found'}), 404
+    entry.text = data['text']
+    db.session.commit()
+    return jsonify({'id': entry.id, 'text': entry.text})
 
-@app.route("/delete/<int:entry_id>")
-def delete(entry_id):
-    entry = session.get(TextEntry, entry_id)
-    if entry:
-        session.delete(entry)
-        session.commit()
-    return redirect("/")
+@app.route('/entries/<int:entry_id>', methods=['DELETE'])
+def delete_entry(entry_id):
+    entry = Entry.query.get(entry_id)
+    if not entry:
+        return jsonify({'error': 'Not found'}), 404
+    db.session.delete(entry)
+    db.session.commit()
+    return jsonify({'result': 'Deleted'})
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(debug=True)
